@@ -1,6 +1,6 @@
 {
   "name": "collector",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "description": "Collector.shop — POC de plateforme de vente d'objets de collection entre particuliers",
   "workspaces": [
