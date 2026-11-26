@@ -17,5 +17,8 @@ jobs:
     steps:
       - uses: googleapis/release-please-action@v4
         with:
+          # Personal access token: a PR opened with the default GITHUB_TOKEN would not trigger
+          # the required checks (GitHub rule), so the release PR could never be merged on protected main.
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
