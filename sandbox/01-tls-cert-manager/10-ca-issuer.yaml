@@ -1,0 +1,35 @@
+# Chaîne de confiance du projet :
+# 1) un émetteur auto-signé sert uniquement à créer la CA ;
+# 2) la CA "Collector POC CA" est un certificat stocké dans le secret collector-ca ;
+# 3) l'émetteur collector-ca signe ensuite tous les certificats du cluster.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: selfsigned-bootstrap
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: collector-ca
+  namespace: cert-manager
+spec:
+  isCA: true
+  commonName: Collector POC CA
+  secretName: collector-ca
+  duration: 8760h # 1 an
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    kind: ClusterIssuer
+    name: selfsigned-bootstrap
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: collector-ca
+spec:
+  ca:
+    secretName: collector-ca

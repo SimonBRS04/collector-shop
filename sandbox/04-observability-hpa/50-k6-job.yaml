@@ -1,0 +1,83 @@
+# Test de charge k6 lancé depuis le cluster : montée à 40 utilisateurs virtuels, palier, descente.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k6-script
+  namespace: sandbox-obs
+data:
+  load-test.js: |
+    import http from 'k6/http';
+    import { check } from 'k6';
+
+    const TARGET = __ENV.TARGET_URL;
+
+    export const options = {
+      stages: [
+        { duration: '1m', target: 40 },   // montée en charge
+        { duration: '2m', target: 40 },   // palier
+        { duration: '30s', target: 0 },   // descente
+      ],
+      thresholds: {
+        http_req_duration: ['p(95)<500'],  // indicateur 5 : p95 < 500 ms
+        http_req_failed: ['rate<0.01'],    // indicateur 5 : erreurs < 1 %
+      },
+    };
+
+    export default function () {
+      const res = http.get(TARGET);
+      check(res, { 'status 200': (r) => r.status === 200 });
+    }
+
+    export function handleSummary(data) {
+      const m = data.metrics;
+      const p95 = m.http_req_duration.values['p(95)'].toFixed(0);
+      const failed = (m.http_req_failed.values.rate * 100).toFixed(2);
+      const rps = m.http_reqs.values.rate.toFixed(1);
+      const total = m.http_reqs.values.count;
+      const ok = (name) => Object.values(m[name].thresholds ?? {}).every((t) => t.ok);
+      return {
+        stdout: [
+          '=== Resume k6 ===',
+          `requetes totales : ${total}`,
+          `debit moyen      : ${rps} req/s`,
+          `p95              : ${p95} ms  (seuil 500 ms : ${ok('http_req_duration') ? 'respecte' : 'DEPASSE'})`,
+          `taux d'erreur    : ${failed} %  (seuil 1 % : ${ok('http_req_failed') ? 'respecte' : 'DEPASSE'})`,
+          '',
+        ].join('\n'),
+      };
+    }
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: k6-load-test
+  namespace: sandbox-obs
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 12345
+      containers:
+        - name: k6
+          image: grafana/k6:1.0.0
+          args: ["run", "/scripts/load-test.js"]
+          env:
+            - name: TARGET_URL
+              value: http://load-api.sandbox-obs.svc.cluster.local/work
+          resources:
+            requests:
+              cpu: 200m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 256Mi
+          volumeMounts:
+            - name: script
+              mountPath: /scripts
+      volumes:
+        - name: script
+          configMap:
+            name: k6-script

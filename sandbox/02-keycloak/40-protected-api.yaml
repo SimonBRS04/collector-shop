@@ -1,0 +1,127 @@
+# API de test minimale : vérifie le jeton JWT émis par Keycloak (signature via JWKS, émetteur, audience)
+# puis le rôle "seller". C'est le mécanisme que réutiliseront les services de l'application.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: protected-api-code
+  namespace: sandbox-auth
+data:
+  server.mjs: |
+    import http from 'node:http';
+    import { createRemoteJWKSet, jwtVerify } from 'jose';
+
+    const { ISSUER, AUDIENCE, JWKS_URL, PORT = '3000' } = process.env;
+    const jwks = createRemoteJWKSet(new URL(JWKS_URL));
+
+    const send = (res, status, body) => {
+      res.writeHead(status, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(body));
+    };
+
+    async function authenticate(req) {
+      const header = req.headers.authorization ?? '';
+      if (!header.startsWith('Bearer ')) return null;
+      try {
+        const { payload } = await jwtVerify(header.slice(7), jwks, { issuer: ISSUER, audience: AUDIENCE });
+        return payload;
+      } catch {
+        return null;
+      }
+    }
+
+    http.createServer(async (req, res) => {
+      if (req.url === '/healthz') return send(res, 200, { status: 'ok' });
+      if (req.url === '/public') return send(res, 200, { message: 'public resource' });
+      if (req.url === '/seller-only') {
+        const claims = await authenticate(req);
+        if (!claims) return send(res, 401, { error: 'unauthorized' });
+        const roles = claims.realm_access?.roles ?? [];
+        if (!roles.includes('seller')) return send(res, 403, { error: 'forbidden' });
+        return send(res, 200, { message: 'seller resource', user: claims.preferred_username });
+      }
+      return send(res, 404, { error: 'not found' });
+    }).listen(Number(PORT), () => console.log(`protected-api listening on ${PORT}`));
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: protected-api
+  namespace: sandbox-auth
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: protected-api
+  template:
+    metadata:
+      labels:
+        app: protected-api
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      initContainers:
+        # Installe la bibliothèque jose (vérification JWT) à côté du code
+        - name: install
+          image: node:24-alpine
+          workingDir: /app
+          command: ["sh", "-c", "cp /src/server.mjs /app/ && npm install jose@6 --no-audit --no-fund --loglevel=error"]
+          env:
+            - name: HOME
+              value: /tmp
+          volumeMounts:
+            - name: app
+              mountPath: /app
+            - name: code
+              mountPath: /src
+      containers:
+        - name: api
+          image: node:24-alpine
+          workingDir: /app
+          command: ["node", "server.mjs"]
+          env:
+            - name: ISSUER
+              value: https://auth.collector.local/realms/collector-sandbox
+            - name: AUDIENCE
+              value: collector-api
+            - name: JWKS_URL
+              value: http://keycloak.sandbox-auth.svc.cluster.local:8080/realms/collector-sandbox/protocol/openid-connect/certs
+          ports:
+            - containerPort: 3000
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 3000
+            periodSeconds: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 20m
+              memory: 48Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          volumeMounts:
+            - name: app
+              mountPath: /app
+      volumes:
+        - name: app
+          emptyDir: {}
+        - name: code
+          configMap:
+            name: protected-api-code
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: protected-api
+  namespace: sandbox-auth
+spec:
+  selector:
+    app: protected-api
+  ports:
+    - port: 80
+      targetPort: 3000

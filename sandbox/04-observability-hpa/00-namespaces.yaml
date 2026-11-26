@@ -1,0 +1,15 @@
+# "monitoring" : pile d'observabilité, conservée ensuite pour l'application.
+# "sandbox-obs" : application de test de l'expérience.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+  labels:
+    app.kubernetes.io/part-of: collector-platform
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: sandbox-obs
+  labels:
+    app.kubernetes.io/part-of: collector-sandbox

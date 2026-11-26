@@ -1,0 +1,26 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: demo-web
+  namespace: sandbox-tls
+  annotations:
+    # cert-manager détecte cette annotation et crée automatiquement le certificat "demo-tls"
+    cert-manager.io/cluster-issuer: collector-ca
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - tls.collector.local
+      secretName: demo-tls
+  rules:
+    - host: tls.collector.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: demo-web
+                port:
+                  number: 80

@@ -1,0 +1,45 @@
+# Vérification depuis l'intérieur du cluster : appel HTTPS de tls.collector.local via l'Ingress,
+# en validant le certificat avec la CA du projet (fichier ca.crt du secret demo-tls).
+# Aucune option "-k/--insecure" : si le certificat n'est pas valide, le Job échoue.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: verify-https
+  namespace: sandbox-tls
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 100
+      containers:
+        - name: curl
+          image: curlimages/curl:8.11.1
+          args:
+            - --silent
+            - --show-error
+            - --fail
+            - --retry
+            - "10"
+            - --retry-delay
+            - "3"
+            - --retry-all-errors
+            - --output
+            - /dev/null
+            - --cacert
+            - /tls/ca.crt
+            - --connect-to
+            - tls.collector.local:443:ingress-nginx-controller.ingress-nginx.svc.cluster.local:443
+            - --write-out
+            - "HTTP %{http_code} | verification TLS : %{ssl_verify_result} | protocole : %{scheme}\n"
+            - https://tls.collector.local/
+          volumeMounts:
+            - name: tls
+              mountPath: /tls
+              readOnly: true
+      volumes:
+        - name: tls
+          secret:
+            secretName: demo-tls

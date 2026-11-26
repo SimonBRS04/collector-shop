@@ -1,0 +1,19 @@
+{
+  "name": "collector",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Collector.shop — POC de plateforme de vente d'objets de collection entre particuliers",
+  "workspaces": [
+    "packages/*",
+    "services/*",
+    "frontend"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present"
+  }
+}

@@ -1,0 +1,140 @@
+# API de test instrumentée : /work consomme du CPU (simule un traitement métier) et
+# expose ses métriques Prometheus sur /metrics (nombre de requêtes, durée en histogramme).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: load-api-code
+  namespace: sandbox-obs
+data:
+  server.mjs: |
+    import http from 'node:http';
+    import { pbkdf2Sync } from 'node:crypto';
+    import client from 'prom-client';
+
+    const PORT = Number(process.env.PORT ?? 3000);
+    const WORK_ITERATIONS = Number(process.env.WORK_ITERATIONS ?? 15000);
+
+    client.collectDefaultMetrics();
+    const httpDuration = new client.Histogram({
+      name: 'http_request_duration_seconds',
+      help: 'HTTP request duration in seconds',
+      labelNames: ['route', 'status_code'],
+      buckets: [0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5],
+    });
+
+    const routes = {
+      '/healthz': () => [200, { status: 'ok' }],
+      '/work': () => {
+        pbkdf2Sync('collector', 'salt', WORK_ITERATIONS, 32, 'sha256'); // CPU-bound work
+        return [200, { done: true }];
+      },
+    };
+
+    http.createServer(async (req, res) => {
+      if (req.url === '/metrics') {
+        res.writeHead(200, { 'content-type': client.register.contentType });
+        return res.end(await client.register.metrics());
+      }
+      const handler = routes[req.url];
+      const end = httpDuration.startTimer({ route: handler ? req.url : 'unknown' }); // bounded label values
+      const [status, body] = handler ? handler() : [404, { error: 'not found' }];
+      res.writeHead(status, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(body));
+      if (req.url !== '/healthz') end({ status_code: status });
+    }).listen(PORT, () => console.log(`load-api listening on ${PORT}`));
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: load-api
+  namespace: sandbox-obs
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: load-api
+  template:
+    metadata:
+      labels:
+        app: load-api
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      initContainers:
+        - name: install
+          image: node:24-alpine
+          workingDir: /app
+          command: ["sh", "-c", "cp /src/server.mjs /app/ && npm install prom-client@15 --no-audit --no-fund --loglevel=error"]
+          env:
+            - name: HOME
+              value: /tmp
+          volumeMounts:
+            - name: app
+              mountPath: /app
+            - name: code
+              mountPath: /src
+      containers:
+        - name: api
+          image: node:24-alpine
+          workingDir: /app
+          command: ["node", "server.mjs"]
+          ports:
+            - name: http
+              containerPort: 3000
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          # Le HPA calcule l'utilisation CPU par rapport à la "request" (100m)
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 128Mi
+          volumeMounts:
+            - name: app
+              mountPath: /app
+      volumes:
+        - name: app
+          emptyDir: {}
+        - name: code
+          configMap:
+            name: load-api-code
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: load-api
+  namespace: sandbox-obs
+  labels:
+    app: load-api
+spec:
+  selector:
+    app: load-api
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+# Indique à Prometheus de collecter /metrics sur ce Service toutes les 5 secondes
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: load-api
+  namespace: sandbox-obs
+spec:
+  selector:
+    matchLabels:
+      app: load-api
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 5s

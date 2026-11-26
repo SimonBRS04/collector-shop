@@ -1,0 +1,64 @@
+# Realm de test importé au démarrage de Keycloak.
+# - rôles métier : buyer, seller, admin
+# - client public "sandbox-tester" (grant "password" réservé au test automatisé ; le front utilisera le flux "authorization code + PKCE")
+# - mapper d'audience : les jetons contiennent aud = "collector-api", vérifié par l'API
+# - utilisateurs sans mot de passe : ils sont définis ensuite par 02-set-test-passwords.ps1 (rien de secret dans Git)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: keycloak-realm
+  namespace: sandbox-auth
+data:
+  collector-sandbox-realm.json: |
+    {
+      "realm": "collector-sandbox",
+      "enabled": true,
+      "roles": {
+        "realm": [
+          { "name": "buyer",  "description": "Acheteur" },
+          { "name": "seller", "description": "Vendeur particulier" },
+          { "name": "admin",  "description": "Administrateur de la plateforme" }
+        ]
+      },
+      "clients": [
+        {
+          "clientId": "sandbox-tester",
+          "enabled": true,
+          "publicClient": true,
+          "standardFlowEnabled": false,
+          "directAccessGrantsEnabled": true,
+          "protocolMappers": [
+            {
+              "name": "audience-collector-api",
+              "protocol": "openid-connect",
+              "protocolMapper": "oidc-audience-mapper",
+              "config": {
+                "included.custom.audience": "collector-api",
+                "access.token.claim": "true",
+                "id.token.claim": "false"
+              }
+            }
+          ]
+        }
+      ],
+      "users": [
+        {
+          "username": "seller-test",
+          "enabled": true,
+          "email": "seller-test@collector.local",
+          "emailVerified": true,
+          "firstName": "Seller",
+          "lastName": "Test",
+          "realmRoles": ["seller", "buyer"]
+        },
+        {
+          "username": "buyer-test",
+          "enabled": true,
+          "email": "buyer-test@collector.local",
+          "emailVerified": true,
+          "firstName": "Buyer",
+          "lastName": "Test",
+          "realmRoles": ["buyer"]
+        }
+      ]
+    }

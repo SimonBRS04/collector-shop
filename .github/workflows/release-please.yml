@@ -1,0 +1,21 @@
+# Automatic versioning: on every push to main, release-please opens or updates
+# a release PR (version bump + CHANGELOG). Merging that PR creates the tag and the GitHub release.
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    name: Release please
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@v4
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json

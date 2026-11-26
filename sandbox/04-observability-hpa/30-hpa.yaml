@@ -1,0 +1,23 @@
+# Autoscaling horizontal : de 1 à 4 pods, cible 50 % d'utilisation CPU (par rapport à la request).
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: load-api
+  namespace: sandbox-obs
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: load-api
+  minReplicas: 1
+  maxReplicas: 4
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 50
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 60   # 5 min par défaut ; réduit pour observer le retour à 1 pod

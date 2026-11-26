@@ -1,0 +1,66 @@
+# Scénario 1 : un changement de prix (+20 %) doit être reçu par les DEUX consommateurs.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: publish-price-1
+  namespace: sandbox-mq
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      initContainers:
+        - name: install
+          image: node:24-alpine
+          workingDir: /app
+          command: ["sh", "-c", "cp /src/*.mjs /app/ && npm install amqplib@0.10 --no-audit --no-fund --loglevel=error"]
+          env:
+            - name: HOME
+              value: /tmp
+          volumeMounts:
+            - name: app
+              mountPath: /app
+            - name: code
+              mountPath: /src
+      containers:
+        - name: publisher
+          image: node:24-alpine
+          workingDir: /app
+          command: ["node", "publisher.mjs"]
+          env:
+            - name: EVENT_ID
+              value: evt-001
+            - name: ARTICLE_ID
+              value: A-1001
+            - name: OLD_PRICE
+              value: "100"
+            - name: NEW_PRICE
+              value: "120"
+            - name: AMQP_HOST
+              value: rabbitmq.sandbox-mq.svc.cluster.local
+            - name: AMQP_USER
+              valueFrom:
+                secretKeyRef:
+                  name: sandbox-mq-secrets
+                  key: username
+            - name: AMQP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: sandbox-mq-secrets
+                  key: password
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: app
+              mountPath: /app
+      volumes:
+        - name: app
+          emptyDir: {}
+        - name: code
+          configMap:
+            name: mq-test-code

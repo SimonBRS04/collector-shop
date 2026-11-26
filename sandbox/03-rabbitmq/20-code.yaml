@@ -1,0 +1,93 @@
+# Code de test : un éditeur (publisher) et un consommateur générique (consumer).
+# Topologie : échange "collector.events" (topic) -> clé "catalog.price.changed"
+#             -> une file durable (quorum) par service consommateur.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mq-test-code
+  namespace: sandbox-mq
+data:
+  amqp.mjs: |
+    import amqp from 'amqplib';
+
+    export const EXCHANGE = 'collector.events';
+    export const ROUTING_KEY = 'catalog.price.changed';
+
+    export async function connect({ retries = 30, delayMs = 2000 } = {}) {
+      const { AMQP_HOST, AMQP_USER, AMQP_PASSWORD } = process.env;
+      const url = `amqp://${encodeURIComponent(AMQP_USER)}:${encodeURIComponent(AMQP_PASSWORD)}@${AMQP_HOST}:5672`;
+      for (let attempt = 1; ; attempt++) {
+        try {
+          return await amqp.connect(url);
+        } catch (error) {
+          if (attempt >= retries) throw error;
+          console.log(`broker not reachable (attempt ${attempt}/${retries}), retrying...`);
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+        }
+      }
+    }
+  publisher.mjs: |
+    import { randomUUID } from 'node:crypto';
+    import { connect, EXCHANGE, ROUTING_KEY } from './amqp.mjs';
+
+    const { EVENT_ID, ARTICLE_ID, OLD_PRICE, NEW_PRICE } = process.env;
+    const event = {
+      eventId: EVENT_ID ?? randomUUID(),
+      type: 'PriceChanged',
+      occurredAt: new Date().toISOString(),
+      articleId: ARTICLE_ID,
+      oldPrice: Number(OLD_PRICE),
+      newPrice: Number(NEW_PRICE),
+    };
+
+    const connection = await connect();
+    const channel = await connection.createConfirmChannel();
+    await channel.assertExchange(EXCHANGE, 'topic', { durable: true });
+    channel.publish(EXCHANGE, ROUTING_KEY, Buffer.from(JSON.stringify(event)), {
+      persistent: true,
+      contentType: 'application/json',
+      messageId: event.eventId,
+    });
+    await channel.waitForConfirms(); // the broker has stored the message
+    console.log(`published ${event.eventId} article=${event.articleId} ${event.oldPrice} -> ${event.newPrice}`);
+    await connection.close();
+  consumer.mjs: |
+    import { writeFileSync } from 'node:fs';
+    import { connect, EXCHANGE, ROUTING_KEY } from './amqp.mjs';
+
+    const { QUEUE, SERVICE_NAME, FRAUD_THRESHOLD_PERCENT = '50' } = process.env;
+
+    const connection = await connect();
+    const channel = await connection.createChannel();
+    await channel.assertExchange(EXCHANGE, 'topic', { durable: true });
+    await channel.assertQueue(QUEUE, { durable: true, arguments: { 'x-queue-type': 'quorum' } });
+    await channel.bindQueue(QUEUE, EXCHANGE, ROUTING_KEY);
+    await channel.prefetch(10);
+    console.log(`[${SERVICE_NAME}] listening on queue ${QUEUE}`);
+
+    await channel.consume(QUEUE, (message) => {
+      if (!message) return;
+      try {
+        const event = JSON.parse(message.content.toString());
+        const variation = ((event.newPrice - event.oldPrice) / event.oldPrice) * 100;
+        let line = `[${SERVICE_NAME}] received ${event.eventId} article=${event.articleId} ${event.oldPrice} -> ${event.newPrice} (${variation.toFixed(1)}%)`;
+        if (SERVICE_NAME === 'fraud' && Math.abs(variation) > Number(FRAUD_THRESHOLD_PERCENT)) {
+          line += ` ALERT variation above ${FRAUD_THRESHOLD_PERCENT}%`;
+        }
+        console.log(line);
+        channel.ack(message); // acknowledged only after processing (at-least-once delivery)
+      } catch (error) {
+        console.error(`[${SERVICE_NAME}] invalid message rejected: ${error.message}`);
+        channel.nack(message, false, false);
+      }
+    });
+
+    writeFileSync('/tmp/ready', ''); // readiness marker: queue declared, bound and consumed
+    console.log(`[${SERVICE_NAME}] ready`);
+
+    const shutdown = async () => {
+      await connection.close();
+      process.exit(0);
+    };
+    process.on('SIGTERM', shutdown);
+    process.on('SIGINT', shutdown);

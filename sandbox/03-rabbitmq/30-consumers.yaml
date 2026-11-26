@@ -1,0 +1,156 @@
+# Deux consommateurs indépendants, chacun avec sa propre file : notification et fraud.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: consumer-notification
+  namespace: sandbox-mq
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: consumer-notification
+  template:
+    metadata:
+      labels:
+        app: consumer-notification
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      initContainers:
+        - name: install
+          image: node:24-alpine
+          workingDir: /app
+          command: ["sh", "-c", "cp /src/*.mjs /app/ && npm install amqplib@0.10 --no-audit --no-fund --loglevel=error"]
+          env:
+            - name: HOME
+              value: /tmp
+          volumeMounts:
+            - name: app
+              mountPath: /app
+            - name: code
+              mountPath: /src
+      containers:
+        - name: consumer
+          image: node:24-alpine
+          workingDir: /app
+          command: ["node", "consumer.mjs"]
+          readinessProbe:
+            exec:
+              command: ["test", "-f", "/tmp/ready"]
+            periodSeconds: 3
+          env:
+            - name: SERVICE_NAME
+              value: notification
+            - name: QUEUE
+              value: notification.price-changed
+            - name: AMQP_HOST
+              value: rabbitmq.sandbox-mq.svc.cluster.local
+            - name: AMQP_USER
+              valueFrom:
+                secretKeyRef:
+                  name: sandbox-mq-secrets
+                  key: username
+            - name: AMQP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: sandbox-mq-secrets
+                  key: password
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 20m
+              memory: 48Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          volumeMounts:
+            - name: app
+              mountPath: /app
+      volumes:
+        - name: app
+          emptyDir: {}
+        - name: code
+          configMap:
+            name: mq-test-code
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: consumer-fraud
+  namespace: sandbox-mq
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: consumer-fraud
+  template:
+    metadata:
+      labels:
+        app: consumer-fraud
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      initContainers:
+        - name: install
+          image: node:24-alpine
+          workingDir: /app
+          command: ["sh", "-c", "cp /src/*.mjs /app/ && npm install amqplib@0.10 --no-audit --no-fund --loglevel=error"]
+          env:
+            - name: HOME
+              value: /tmp
+          volumeMounts:
+            - name: app
+              mountPath: /app
+            - name: code
+              mountPath: /src
+      containers:
+        - name: consumer
+          image: node:24-alpine
+          workingDir: /app
+          command: ["node", "consumer.mjs"]
+          readinessProbe:
+            exec:
+              command: ["test", "-f", "/tmp/ready"]
+            periodSeconds: 3
+          env:
+            - name: SERVICE_NAME
+              value: fraud
+            - name: QUEUE
+              value: fraud.price-changed
+            - name: AMQP_HOST
+              value: rabbitmq.sandbox-mq.svc.cluster.local
+            - name: AMQP_USER
+              valueFrom:
+                secretKeyRef:
+                  name: sandbox-mq-secrets
+                  key: username
+            - name: AMQP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: sandbox-mq-secrets
+                  key: password
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 20m
+              memory: 48Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          volumeMounts:
+            - name: app
+              mountPath: /app
+      volumes:
+        - name: app
+          emptyDir: {}
+        - name: code
+          configMap:
+            name: mq-test-code

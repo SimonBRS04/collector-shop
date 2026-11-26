@@ -1,0 +1,65 @@
+# Scénarios de vérification : chaque ligne affiche OK ou ECHEC ; le Job échoue si un seul scénario échoue.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: verify-auth
+  namespace: sandbox-auth
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 100
+      containers:
+        - name: curl
+          image: curlimages/curl:8.11.1
+          env:
+            - name: SELLER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: sandbox-auth-secrets
+                  key: seller-password
+            - name: BUYER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: sandbox-auth-secrets
+                  key: buyer-password
+          command:
+            - sh
+            - -c
+            - |
+              TOKEN_URL=http://keycloak.sandbox-auth.svc.cluster.local:8080/realms/collector-sandbox/protocol/openid-connect/token
+              API=http://protected-api.sandbox-auth.svc.cluster.local
+              FAIL=0
+
+              get_token() {
+                curl -s -X POST "$TOKEN_URL" \
+                  -d grant_type=password -d client_id=sandbox-tester \
+                  -d username="$1" --data-urlencode password="$2" \
+                  | sed -n 's/.*"access_token":"\([^"]*\)".*/\1/p'
+              }
+
+              check() {
+                label="$1"; expected="$2"; shift 2
+                code=$(curl -s -o /dev/null -w '%{http_code}' "$@")
+                if [ "$code" = "$expected" ]; then
+                  echo "OK     $label -> $code"
+                else
+                  echo "ECHEC  $label -> $code (attendu $expected)"; FAIL=1
+                fi
+              }
+
+              SELLER=$(get_token seller-test "$SELLER_PASSWORD")
+              BUYER=$(get_token buyer-test "$BUYER_PASSWORD")
+              [ -n "$SELLER" ] && echo "OK     jeton vendeur obtenu" || { echo "ECHEC  jeton vendeur"; FAIL=1; }
+              [ -n "$BUYER" ]  && echo "OK     jeton acheteur obtenu" || { echo "ECHEC  jeton acheteur"; FAIL=1; }
+
+              check "ressource publique, sans jeton      " 200 "$API/public"
+              check "ressource vendeur, sans jeton       " 401 "$API/seller-only"
+              check "ressource vendeur, jeton falsifie   " 401 -H "Authorization: Bearer ${SELLER}x" "$API/seller-only"
+              check "ressource vendeur, jeton acheteur   " 403 -H "Authorization: Bearer $BUYER" "$API/seller-only"
+              check "ressource vendeur, jeton vendeur    " 200 -H "Authorization: Bearer $SELLER" "$API/seller-only"
+
+              exit $FAIL

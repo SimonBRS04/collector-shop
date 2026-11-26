@@ -1,0 +1,45 @@
+# Validates that every pull request title follows Conventional Commits.
+# With "squash and merge", the PR title becomes the commit message on main,
+# which release-please reads to compute the next version.
+name: PR title
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  pull-requests: read
+
+jobs:
+  pr-title:
+    name: Validate PR title
+    runs-on: ubuntu-latest
+    steps:
+      - uses: amannn/action-semantic-pull-request@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          types: |
+            feat
+            fix
+            docs
+            ci
+            refactor
+            test
+            perf
+            style
+            build
+            chore
+          scopes: |
+            catalog
+            notification
+            fraud
+            shared
+            frontend
+            infra
+            deps
+            main
+          requireScope: false
+          subjectPattern: ^[a-z].+[^.]$
+          subjectPatternError: |
+            The description "{subject}" must start with a lowercase letter and must not end with a period.

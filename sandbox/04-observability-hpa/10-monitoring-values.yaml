@@ -1,0 +1,47 @@
+# Valeurs Helm de kube-prometheus-stack (chart 93.9.0), allégées pour Minikube (7 Go).
+alertmanager:
+  enabled: false            # pas d'alerting dans le bac à sable
+
+nodeExporter:
+  enabled: false            # métriques machine non nécessaires ici (cAdvisor suffit pour le CPU des pods)
+
+# Composants du plan de contrôle non exposés par Minikube : désactivés pour éviter des cibles en erreur
+kubeEtcd:
+  enabled: false
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeProxy:
+  enabled: false
+
+prometheus:
+  prometheusSpec:
+    retention: 2d
+    scrapeInterval: 15s
+    # Prendre en compte TOUS les ServiceMonitor du cluster (pas seulement ceux du chart)
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    resources:
+      requests:
+        cpu: 200m
+        memory: 512Mi
+      limits:
+        memory: 1Gi
+
+grafana:
+  admin:
+    existingSecret: grafana-admin
+    userKey: admin-user
+    passwordKey: admin-password
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard   # tout ConfigMap portant ce label devient un tableau de bord
+  # 256Mi provoquait un arrêt OOMKilled au démarrage (Grafana récent) : limite portée à 512Mi
+  resources:
+    requests:
+      cpu: 50m
+      memory: 256Mi
+    limits:
+      memory: 512Mi

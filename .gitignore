@@ -1,0 +1,28 @@
+# Dépendances et builds
+node_modules/
+dist/
+build/
+coverage/
+*.tsbuildinfo
+
+# Secrets : ne JAMAIS versionner
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+infra/k8s/**/secret*.yaml
+!infra/k8s/**/secret*.example.yaml
+
+# Rapports générés
+reports/
+*.log
+npm-debug.log*
+
+# Système / éditeurs
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
